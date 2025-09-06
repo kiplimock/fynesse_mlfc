@@ -2,6 +2,15 @@ from .config import *
 
 from . import access
 
+from .config import *
+import osmnx as ox
+from osmnx._errors import InsufficientResponseError
+import matplotlib.pyplot as plt
+import math
+import pandas as pd
+
+from sklearn.decomposition import PCA
+
 """These are the types of import we might expect in this file
 import pandas
 import bokeh
@@ -29,3 +38,153 @@ def view(data):
 def labelled(data):
     """Provide a labelled set of data ready for supervised learning."""
     raise NotImplementedError
+
+def plot_city_map(place_name, latitude, longitude, box_size_km=2, poi_tags=None):
+    """
+    Plot a simple city map with area boundary, buildings, roads, nodes, and optional POIs.
+
+    Parameters
+    ----------
+    place_name : str
+        Name of the place (used for boundary + plot title).
+    latitude, longitude : float
+        Central coordinates.
+    box_size_km : float
+        Size of the bounding box in kilometers (default 2 km).
+    poi_tags : dict, optional
+        Tags dict for POIs (e.g. {"amenity": ["school", "restaurant"]}).
+    """
+
+    bbox, nodes, edges, buildings, pois = access.get_osm_datapoints(latitude, longitude, box_size_km, poi_tags)
+    west, south, east, north = bbox
+
+    # Area boundary
+    area = ox.geocode_to_gdf(place_name).to_crs(epsg=4326)
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(6, 6))
+    area.plot(ax=ax, color="tan", alpha=0.5)
+    if not buildings.empty:
+        buildings.plot(ax=ax, facecolor="gray", edgecolor="gray", linewidth=0.5)
+    edges.plot(ax=ax, color="black", linewidth=1, alpha=0.3, column=None)
+    nodes.plot(ax=ax, color="black", markersize=1, alpha=0.3, column=None)
+    if pois is not None and not pois.empty:
+        pois.plot(ax=ax, color="green", markersize=5, alpha=1, column=None)
+    ax.set_xlim(west, east)
+    ax.set_ylim(south, north)
+    ax.set_title(place_name, fontsize=14)
+    ax.axis("off")
+    plt.tight_layout()
+    plt.show()
+
+
+def get_osm_features(latitude, longitude, box_size_km=2, tags=None):
+    """
+    Access raw OSM data
+    """
+    
+    # Construct bbox from lat/lon and box_size
+    box_height = box_size_km / 111
+    box_width = box_size_km / (111 * math.cos(math.radians(latitude)))
+
+    north = latitude + box_height / 2
+    south = latitude - box_height / 2
+    east = longitude + box_width / 2
+    west = longitude - box_width / 2
+    bbox = (west, south, east, north)
+
+    # Query OSMnx for features
+    if features is None:
+        features = []
+    feat_keys = set([k for (k, v) in features])
+    tags = {key:True for key in feat_keys}
+
+    try:
+        pois_df = ox.features_from_bbox(bbox, tags)
+    except InsufficientResponseError:
+        return {f"{key}_{value or ''}": 0 for key, value in features}
+
+    return pois_df
+
+def get_feature_vector(latitude, longitude, box_size_km=2, features=None):
+    """
+    Given a central point (latitude, longitude) and a bounding box size,
+    query OpenStreetMap via OSMnx and return a feature vector.
+
+    Parameters
+    ----------
+    latitude : float
+        Latitude of the center point.
+    longitude : float
+        Longitude of the center point.
+    box_size : float
+        Size of the bounding box in kilometers
+    features : list of tuples
+        List of (key, value) pairs to count. Example:
+        [
+            ("amenity", None),
+            ("amenity", "school"),
+            ("shop", None),
+            ("tourism", "hotel"),
+        ]
+
+    Returns
+    -------
+    feature_vector : dict
+        Dictionary of feature counts, keyed by (key, value).
+    """
+
+    pois_df = get_osm_features(latitude, longitude, box_size_km, features)  
+
+    # Count features matching each (key, value) in poi_types
+    feature_vector = {}
+    for key, value in features:
+        if key in pois_df.columns:
+            if value is None:
+                feature_vector[f"{key}_"] = pois_df[key].notnull().sum()
+            else:
+                feature_vector[f"{key}_{value}"] = (pois_df[key] == value).sum()
+        else:
+            feature_vector[f"{key}_{value or ''}"] = 0
+
+    # Return dictionary of counts
+    return feature_vector
+
+    raise NotImplementedError("Feature extraction not implemented yet.")
+
+def build_feature_dataframe(city_dicts, features, box_size_km=1):
+    results = {}
+    for country, cities in city_dicts:
+        for city, coords in cities.items():
+            vec = get_feature_vector(
+                coords["latitude"],
+                coords["longitude"],
+                box_size_km=box_size_km,
+                features=features
+            )
+            vec["country"] = country
+            results[city] = vec
+    return pd.DataFrame(results).T
+
+def visualize_feature_space(X, y, method='PCA'):
+    """
+    Assess data distribution and separability
+    """
+    if method == 'PCA':
+        reducer = PCA(n_components=2)
+    else:
+        raise ValueError(f"Unknown method: {method}")
+
+    X_reduced = reducer.fit_transform(X)
+
+    plt.figure(figsize=(8,6))
+    for country, color in [("Kenya", "green"), ("England", "blue")]:
+        mask = (y == country)
+        plt.scatter(X_reduced[mask, 0], X_reduced[mask, 1],
+                    label=country, color=color, s=100, alpha=0.7)
+    
+    plt.xlabel("PC1")
+    plt.ylabel("PC2")
+    plt.title("2D projection of feature vectors")
+    plt.legend()
+    plt.show()

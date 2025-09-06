@@ -16,3 +16,10 @@ import scipy.stats"""
 
 """Address a particular question that arises from the data"""
 
+def train_location_classifier(X_train, y_train, model_type='logistic'):
+    # Address classification problem
+    pass
+
+def evaluate_classifier(model, X_test, y_test):
+    # Address evaluation of performance
+    pass
