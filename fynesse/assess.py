@@ -11,6 +11,9 @@ import pandas as pd
 
 from sklearn.decomposition import PCA
 
+import numpy as np
+import matplotlib.pyplot as plt
+
 """These are the types of import we might expect in this file
 import pandas
 import bokeh
@@ -187,4 +190,151 @@ def visualize_feature_space(X, y, method='PCA'):
     plt.ylabel("PC2")
     plt.title("2D projection of feature vectors")
     plt.legend()
+    plt.show()
+
+
+def print_err(target, pred_dict):
+    """
+    Prints error metrics between target and predictions.
+    Args:
+        target (dict): Dictionary containing true values with keys 'train', 'val', 'test'.
+                       Each key maps to another dict with keys 'X', 'Y', 'A', and 'B'.
+        pred_dict (dict): Dictionary containing predicted values with keys 'train', 'val', 'test'.
+                          Each key maps to a tuple of (predicted_magnitudes, predicted_angles).
+    
+    Returns:
+        err_dict (dict): Dictionary containing error metrics for each dataset split.
+    """
+    err_dict = {}
+    for key in pred_dict.keys():
+        cmplx_target = target[key]['Y'][:,:,0]*np.exp(1j*target[key]['Y'][:,:,1])
+        if pred_dict[key][0].shape == target[key]['Y'][:,:,0].shape:
+            mag_err = pred_dict[key][0] - target[key]['Y'][:,:,0]
+            ang_err = pred_dict[key][1] - target[key]['Y'][:,:,1]
+            cmplx_pred = pred_dict[key][0]*np.exp(1j*pred_dict[key][1])
+        else:
+            print("shape mismatch so broadcasting")
+            mag_err = pred_dict[key][0][0,:] - target[key]['Y'][:,:,0]
+            ang_err = pred_dict[key][1][0,:] - target[key]['Y'][:,:,1]
+            cmplx_pred = pred_dict[key][0][0,:]*np.exp(1j*pred_dict[key][1][0,:])
+
+        cmplx_err = cmplx_target - cmplx_pred
+        print(key)
+        print('Vm MAE: %.5e' % (np.abs(mag_err).mean()))
+        print('Vm MSE: %.5e' % (np.square(mag_err).mean()))
+        print('Vm FVU: %.5e' % (np.square(mag_err).mean()/target[key]['Y'][:,:,0].var()))
+        print("")
+
+        print('Va MAE: %.5e' % (np.abs(ang_err).mean()))
+        print('Va MSE: %.5e' % (np.square(ang_err).mean()))
+        print('Va FVU: %.5e' % (np.square(ang_err).mean()/target[key]['Y'][:,:,1].var()))
+        print("")
+        print('Mean Complex Err. Mag.: %.5e \n' % (np.abs(cmplx_err).mean()))
+        tmp = {
+            'Vm MAE':np.abs(mag_err).mean(),
+            'Vm MSE':np.square(mag_err).mean(),
+            'Vm FVU':np.square(mag_err).mean()/target[key]['Y'][:,:,0].var(),
+            'Va MAE':np.abs(ang_err).mean(),
+            'Va MSE':np.square(ang_err).mean(),
+            'Va FVU':np.square(ang_err).mean()/target[key]['Y'][:,:,1].var(),
+            'MCEM':np.abs(cmplx_err).mean(),
+        }
+        err_dict.update({key:tmp})
+    
+    return err_dict
+
+
+def plot_comparison_bar(errors, err_key, methods, sel_key=None, *, show_mag=True, show_ang=True, logy=True):
+    rows = len(errors[0].keys()) if sel_key is None else len(sel_key)
+    cols = int(show_mag)+int(show_ang)
+    if err_key == 'MCEM':
+        cols = 1
+        show_ang = False
+        show_mag = False
+    if cols == 0:
+        raise ValueError("No columns in figure")
+    fig, axs = plt.subplots(rows, cols, sharex=True)
+    bar_colors = [
+        'tab:blue',
+        'tab:orange',
+        'tab:green',
+        'tab:red',
+        'tab:purple',
+        'tab:brown'
+        'tab:pink',
+        'tab:gray',
+        'tab:olive'
+        'tab:cyan',
+        ]*5
+    
+    
+    sel_key = list(errors[0].keys()) if sel_key is None else sel_key
+    if rows == 1 and cols == 1:
+        sel_col = 'Vm' if show_mag else 'Va'
+        col_key = sel_col+' '+err_key
+        if err_key == 'MCEM':
+            sel_col = 'Mean Complex Err Mag.'
+            col_key = err_key
+        counts = [error[sel_key[0]][col_key] for error in errors]
+        if logy:
+            axs.set_yscale('log')
+        axs.bar(
+                    methods,
+                    counts,
+                    #label=methods, 
+                    color=bar_colors[:len(counts)]
+                )
+        axs.set_ylabel(err_key)
+        axs.set_title(sel_col)
+        print(counts)
+        #axs.legend(title='Methods')
+    elif rows > 1:
+        for i, j in enumerate(sel_key):
+            if show_mag and show_ang:
+                counts = [error[j]['Vm '+err_key] for error in errors]
+                if logy:
+                    axs[i,0].set_yscale('log')
+                    axs[i,1].set_yscale('log')
+                axs[i,0].bar(
+                    methods,
+                    counts,
+                    #label=methods, 
+                    color=bar_colors[:len(counts)]
+                )
+                axs[i,0].set_ylabel(err_key)
+                if i == 0:
+                    axs[i,0].set_title('Vm')
+                    #axs[i,0].legend(title='Methods')
+
+                counts = [error[j]['Va '+err_key] for error in errors]
+                axs[i,1].bar(
+                    methods,
+                    counts,
+                    #label=methods, 
+                    color=bar_colors[:len(counts)]
+                )
+                #axs[i,1].set_ylabel(err_key)
+                if i == 0:
+                    axs[i,1].set_title('Va')
+                    #axs[i,1].legend(title='Methods')
+            else:
+                sel_col = 'Vm' if show_mag else 'Va'
+                col_key = sel_col+' '+err_key
+                if err_key == 'MCEM':
+                    sel_col = 'Mean Complex Err Mag.'
+                    col_key = err_key
+                counts = [error[sel_key[0]][col_key] for error in errors]
+                if logy:
+                    axs[i].set_yscale('log')
+                axs[i].bar(
+                    methods,
+                    counts,
+                    #label=methods, 
+                    color=bar_colors[:len(counts)]
+                )
+                axs[i].set_ylabel(err_key)
+                if i == 0:
+                    axs[i].set_title(sel_col)
+                    #axs[i].legend(title='Methods')
+
     plt.show()
